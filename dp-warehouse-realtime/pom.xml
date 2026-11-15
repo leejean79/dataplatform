@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.leejean</groupId>
+        <artifactId>dataplatform</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>dp-warehouse-realtime</artifactId>
+    <name>dp-warehouse-realtime</name>
+    <description>实时数仓：Flink CDC 采集与 Flink 实时加工作业 / Realtime warehouse: Flink CDC ingestion and Flink streaming jobs</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.leejean</groupId>
+            <artifactId>dp-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-streaming-java</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-clients</artifactId>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.leejean</groupId>
+        <artifactId>dataplatform</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>dp-warehouse-offline</artifactId>
+    <name>dp-warehouse-offline</name>
+    <description>离线数仓：Spark 批量抽取、Spark SQL 运行器与各层加工脚本 / Offline warehouse: Spark batch ingestion, Spark SQL runner and layer scripts</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.leejean</groupId>
+            <artifactId>dp-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-sql_${scala.binary.version}</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-hive_${scala.binary.version}</artifactId>
+        </dependency>
+    </dependencies>
+</project>

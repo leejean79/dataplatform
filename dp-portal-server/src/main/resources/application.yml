@@ -1,0 +1,6 @@
+# Web 平台后端配置 / Web portal backend configuration
+server:
+  port: 8080
+spring:
+  application:
+    name: dp-portal-server

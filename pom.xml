@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.leejean</groupId>
+    <artifactId>dataplatform</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>dataplatform</name>
+    <description>制造业数据中台原型（整车制造场景） / Manufacturing data platform prototype</description>
+
+    <!-- 模块按运行时引擎划分，避免 Spark、Flink、Spring Boot 依赖互相干扰 -->
+    <!-- Modules are split by runtime engine so Spark, Flink and Spring Boot dependencies never mix -->
+    <modules>
+        <module>dp-common</module>
+        <module>dp-mock</module>
+        <module>dp-warehouse-offline</module>
+        <module>dp-warehouse-realtime</module>
+        <module>dp-quality</module>
+        <module>dp-portal-server</module>
+    </modules>
+
+    <properties>
+        <!-- 全工程统一 JDK 8：Hadoop 3.3.6 与 Hive 3.1.3 的运行环境是 Java 8 -->
+        <!-- JDK 8 everywhere: Hadoop 3.3.6 and Hive 3.1.3 run on Java 8 -->
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- 版本基线，依据 docs/00-总体架构设计.md 第 5 节 -->
+        <!-- Version baseline, see section 5 of docs/00-总体架构设计.md -->
+        <scala.binary.version>2.12</scala.binary.version>
+        <spark.version>3.5.7</spark.version>
+        <flink.version>1.20.3</flink.version>
+        <spring-boot.version>2.7.18</spring-boot.version>
+        <junit.version>5.10.2</junit.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.leejean</groupId>
+                <artifactId>dp-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- Spark：由集群在运行时提供，统一声明为 provided -->
+            <!-- Spark: supplied by the cluster at runtime, always provided scope -->
+            <dependency>
+                <groupId>org.apache.spark</groupId>
+                <artifactId>spark-sql_${scala.binary.version}</artifactId>
+                <version>${spark.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.spark</groupId>
+                <artifactId>spark-hive_${scala.binary.version}</artifactId>
+                <version>${spark.version}</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <!-- Flink：由集群在运行时提供，统一声明为 provided -->
+            <!-- Flink: supplied by the cluster at runtime, always provided scope -->
+            <dependency>
+                <groupId>org.apache.flink</groupId>
+                <artifactId>flink-streaming-java</artifactId>
+                <version>${flink.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.flink</groupId>
+                <artifactId>flink-clients</artifactId>
+                <version>${flink.version}</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- 所有模块都使用 JUnit 5 编写单元测试 -->
+    <!-- Every module writes unit tests with JUnit 5 -->
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
+                </plugin>
+                <!-- 需要提交到集群的作业模块在各自的 pom 中启用 shade 打包 -->
+                <!-- Job modules submitted to the cluster enable shading in their own pom -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
+                    <version>3.5.3</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>
