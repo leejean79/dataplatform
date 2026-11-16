@@ -20,6 +20,6 @@
 
 - **执行环境**：本地开发机，工作目录为仓库根目录。
 - **调用命令**：`mvn verify`
-- **前置条件**：已经安装 JDK 8 和 Maven 3.9，并且能够访问 Maven 中央仓库或其镜像。在中国大陆建议在 `~/.m2/settings.xml` 中配置阿里云镜像仓库。
+- **前置条件**：已经安装 JDK 8（8u371 及以上的更新版本）和 Maven 3.6.3 及以上版本，并且能够访问 Maven 中央仓库或其镜像。在中国大陆建议在 `~/.m2/settings.xml` 中配置阿里云镜像仓库。
 - **期望产出**：六个模块全部显示 `BUILD SUCCESS`，`dp-portal-server/target/` 下生成 `dp-portal-server-1.0.0-SNAPSHOT.jar`。
 - **常见失败兜底**：出现依赖无法下载的错误时，应当先检查镜像仓库配置；出现 `invalid target release` 之类的编译错误时，应当执行 `mvn -version` 确认 Maven 实际使用的 JDK 版本。
