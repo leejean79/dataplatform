@@ -1,3 +1,118 @@
-# deploy
+# 核心组环境（M0-01）
 
-本目录存放 Docker Compose 编排文件、初始化脚本、DataHub 采集配置和 DolphinScheduler 工作流定义。具体内容由“01 环境与部署设计”及其任务卡定义。
+本目录实现 MySQL、NameNode、DataNode、ResourceManager、NodeManager、Hive Metastore、HiveServer2 和作业提交网关共八个服务。网关目前只提供 Hadoop 与 Hive 客户端。正式设计见 `docs/01-环境与部署设计.md`。
+
+## 1. 准备服务器
+
+以下操作由项目负责人在阿里云 Ubuntu 22.04、x86、8 核、32 GB 内存、200 GB 云盘的服务器执行。服务器安全组只开放 SSH，容器端口均绑定到服务器的 `127.0.0.1`。
+
+安装命令在服务器任意目录执行，需要 sudo 权限和外网连接，预期安装 Docker Engine 与 Compose 插件。失败时检查软件源、网络及是否存在冲突的旧版 Docker 软件包；命令以非零状态退出时不要继续部署。
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable' | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo docker version
+sudo docker compose version
+```
+
+后续命令要求当前账号已经具有 Docker 权限。可由管理员配置 docker 用户组后重新登录，或者以具备 Docker 权限的管理员账号操作。Compose 需要支持 `up --wait`，推荐使用当前 Docker 官方软件源提供的版本。
+
+## 2. 克隆仓库与配置变量
+
+在服务器任意目录执行以下命令，需要 GitHub 读取权限及 `/opt` 写入权限，预期检出本任务分支。克隆失败时检查仓库权限与网络；已经存在仓库时在原仓库检出对应分支，不要覆盖已有目录。
+
+```bash
+sudo git clone --branch task/M0-01-core-env https://github.com/leejean79/dataplatform.git /opt/dataplatform
+sudo chown -R "$(id -u):$(id -g)" /opt/dataplatform
+cd /opt/dataplatform
+cp -n deploy/.env.example deploy/.env
+chmod 600 deploy/.env
+```
+
+编辑 `deploy/.env`，替换全部示例密码。模板中的密码仅用于示例，文件已被 Git 忽略。含 `$`、`#` 或空格的值应按 Compose 的环境文件语法使用单引号，值中的单引号使用 `\'` 转义。不要使用 `source deploy/.env`，因为它不是 Shell 脚本。
+
+镜像选择为 Temurin `8u512-b09-jdk-jammy`、MySQL `8.0.46`、Hadoop `3.3.6`、Hive `3.1.3` 和 MySQL Connector/J `8.0.33`。自建镜像名称、基础镜像和发行包下载地址均可在 `.env` 中替换。MySQL 8.0.46 是官方 8.0 发布说明列出的最终版本，仍遵守本项目的 8.0 基线，不在本任务内调整版本线。
+
+版本依据：[Temurin 官方镜像清单](https://github.com/docker-library/official-images/blob/master/library/eclipse-temurin)、[MySQL 8.0 发布说明](https://dev.mysql.com/doc/relnotes/mysql/8.0/en/)。标签能否从服务器拉取仍需实际验证。
+
+## 3. 构建镜像
+
+以下命令均在服务器 `/opt/dataplatform` 执行，前提是 `.env` 已配置、Docker 可用且可下载镜像和安装包。预期生成三个自建镜像并拉取 MySQL。失败时检查构建日志与下载地址，替换为可访问的镜像源后重新构建；不要把安装包提交到仓库。
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml --profile core config --quiet
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml build namenode
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml build hive-metastore
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml build gateway
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml pull mysql
+```
+
+必须依次构建：Hive 基于第一步构建的 Hadoop 镜像，网关基于第二步构建的 Hive 镜像。当前任务不使用 Spark 或 Flink。
+
+Hadoop 和 Hive 的默认发行包地址是 Apache 官方归档站，MySQL 驱动来自 Maven 中央仓库。在受限网络下，应在 `.env` 中设置已同步的阿里云镜像地址及可访问的下载地址。此时构建仍需能访问基础镜像的软件源；本任务未实测阿里云网络。
+
+## 4. 启动、健康检查与停止
+
+以下命令均在服务器 `/opt/dataplatform` 执行，前提是上一步的镜像已经构建成功。预期八个服务通过检查，停止再启动后仍能使用原数据。参数错误退出码为 2，服务失败为非零退出码；排查方式见第 6 节。
+
+```bash
+bash deploy/scripts/dp-up.sh core
+bash deploy/scripts/dp-health.sh core
+bash deploy/scripts/dp-down.sh core
+bash deploy/scripts/dp-up.sh core
+bash deploy/scripts/dp-health.sh core
+```
+
+`dp-up.sh` 和 `dp-down.sh` 接收一个或多个分组参数，目前只接受 `core`；`dp-health.sh` 恰好接收一个 `core` 参数。启动最多等待 900 秒，按服务依赖顺序等待健康检查，不会自动构建镜像。停止脚本只停止八个服务，不删除容器、网络或命名卷。
+
+健康检查会实际连接 MySQL、列出 HDFS 根目录、检查 DataNode 注册及 YARN 的运行节点，并通过 Hive CLI 或 Beeline 查询数据库。`dp-health.sh` 主动执行同一探测，不只读取缓存状态。MySQL 健康检查还确认七个数据库已创建。
+
+首次启动仅在空的 NameNode 卷中格式化 HDFS；非空且缺少 VERSION 的卷会拒绝启动。Hive 仅在元数据库中没有任何表时初始化模式，已有模式必须通过检查与验证，数据库连接失败不会触发初始化。初始化只创建基础设施元数据，不创建业务表。
+
+## 5. 验收与访问
+
+任务卡 `docs/tasks/M0-01-核心组环境.md` 中的八项验收全部在阿里云服务器 `/opt/dataplatform` 执行。本段命令需要八个服务已启动，预期能列出 HDFS、看到一个 RUNNING 节点、看到 `default` 数据库并输出容器资源信息；失败时返回非零状态或缺少预期结果，应按第 6 节排查。
+
+```bash
+docker compose -f deploy/docker-compose.yml exec gateway hdfs dfs -ls /
+docker compose -f deploy/docker-compose.yml exec gateway yarn node -list
+docker compose -f deploy/docker-compose.yml exec gateway beeline -u jdbc:hive2://hiveserver2:10000 -e 'show databases'
+ss -ltnp | grep -E '3306|9870|8088|10000'
+docker stats --no-stream
+```
+
+直接使用 `-f deploy/docker-compose.yml` 时，Compose 会从编排文件目录读取 `deploy/.env`；脚本显式使用 `--env-file`。验收还必须包含停止再启动检查。端口监听地址只能为 `127.0.0.1`，不能出现 `0.0.0.0`。全部核心服务的内存上限合计为 12.5 GiB，实际占用须以服务器的 `docker stats` 为准。
+
+在本地电脑任意目录执行以下命令，替换账号与地址，需要 SSH 权限、本地端口空闲且服务器服务健康，预期保持隧道连接；失败时检查 SSH 权限或更换冒号左侧的本地端口。
+
+```bash
+ssh -N -L 9870:127.0.0.1:9870 -L 8088:127.0.0.1:8088 -L 10002:127.0.0.1:10002 <用户名>@<服务器地址>
+```
+
+随后在浏览器访问 `http://127.0.0.1:9870`、`http://127.0.0.1:8088` 和 `http://127.0.0.1:10002`。
+
+## 6. 排查与数据保留
+
+在服务器 `/opt/dataplatform` 执行下列命令，需要 Docker 权限及现有容器，预期输出服务状态、最近日志与探测记录。失败时检查 Docker daemon、仓库目录和环境变量文件。
+
+```bash
+docker compose -f deploy/docker-compose.yml --profile core ps -a
+docker compose -f deploy/docker-compose.yml logs --tail=100 hive-metastore hiveserver2
+docker compose -f deploy/docker-compose.yml logs --tail=100 mysql namenode nodemanager
+docker inspect --format '{{json .State.Health}}' "$(docker compose -f deploy/docker-compose.yml ps -q hive-metastore)"
+```
+
+- 镜像拉取失败时检查 `.env` 中的完整标签和镜像仓库地址；下载失败时检查对应 URL。
+- Hive 依赖冲突目前只按设计替换 Guava。出现其他冲突时保留完整日志并反馈架构师，不自行调整版本基线。
+- MySQL 首次初始化失败时，官方入口可能已留下部分数据。修改密码或初始化脚本后不会自动修复已有卷，应先备份并由负责人判断恢复方式。
+- 修改 `.env` 的密码不会修改已有数据库账号密码，必须先在数据库中同步变更，再重建相关容器。
+- HDFS 使用 `dp_namenode` 与 `dp_datanode`，MySQL 使用 `dp_mysql`，YARN 使用 `dp_yarn_local` 与 `dp_yarn_logs`。必须成套保留 HDFS 的两个卷，不能只重建其中一个。
+
+本任务不提供删除数据卷的脚本。阿里云验收、Hive 兼容性、重启幂等性和实际内存占用在执行前均不能视为已通过。

@@ -1,0 +1,182 @@
+name: dataplatform
+
+# 所有 Hadoop 进程共用 dp 用户和只读配置。All Hadoop daemons share one user/configuration.
+x-hadoop: &hadoop
+  image: ${HADOOP_IMAGE:?请配置 deploy/.env}
+  profiles: [core]
+  environment: &hadoop-env
+    TZ: Asia/Shanghai
+    HADOOP_HEAPSIZE_MAX: '512'
+  networks: [dp-net]
+  volumes: &hadoop-conf
+    - ./conf/hadoop:/opt/hadoop/etc/hadoop:ro
+  healthcheck: &health
+    interval: 20s
+    timeout: 30s
+    retries: 15
+    start_period: 60s
+
+x-hive: &hive
+  <<: *hadoop
+  image: ${HIVE_IMAGE:?请配置 deploy/.env}
+  environment: &hive-env
+    <<: *hadoop-env
+    HADOOP_HEAPSIZE: '512'
+    HIVE_DB_PASSWORD: ${HIVE_DB_PASSWORD:?请配置 Hive 密码}
+  volumes: &hive-conf
+    - ./conf/hadoop:/opt/hadoop/etc/hadoop:ro
+    - ./conf/hive:/etc/dp-hive:ro
+
+services:
+  mysql:
+    image: ${MYSQL_IMAGE:?请配置 MySQL 镜像}
+    profiles: [core]
+    mem_limit: 1g
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请配置 root 密码}
+      SOURCE_DB_PASSWORD: ${SOURCE_DB_PASSWORD:?请配置数据源密码}
+      HIVE_DB_PASSWORD: ${HIVE_DB_PASSWORD:?请配置 Hive 密码}
+      SCHEDULER_DB_PASSWORD: ${SCHEDULER_DB_PASSWORD:?请配置调度密码}
+      DATAHUB_DB_PASSWORD: ${DATAHUB_DB_PASSWORD:?请配置治理密码}
+      PORTAL_DB_PASSWORD: ${PORTAL_DB_PASSWORD:?请配置门户密码}
+      CDC_DB_PASSWORD: ${CDC_DB_PASSWORD:?请配置变更捕获密码}
+    command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports: ['127.0.0.1:3306:3306']
+    networks: [dp-net]
+    volumes:
+      - dp_mysql:/var/lib/mysql
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      <<: *health
+      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -uroot -N -B -e "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN (\"mes\",\"qms\",\"erp\",\"hive_metastore\",\"dolphinscheduler\",\"datahub\",\"dp_portal\")" | grep -qx 7']
+
+  namenode:
+    <<: *hadoop
+    hostname: namenode
+    build:
+      context: ./images/hadoop-base
+      args:
+        JDK_IMAGE: ${JDK_IMAGE:?请配置 JDK 镜像}
+        HADOOP_VERSION: ${HADOOP_VERSION:?请配置 Hadoop 版本}
+        HADOOP_DOWNLOAD_URL: ${HADOOP_DOWNLOAD_URL:?请配置 Hadoop 下载地址}
+    command: [namenode]
+    mem_limit: 1g
+    ports: ['127.0.0.1:9870:9870']
+    volumes:
+      - ./conf/hadoop:/opt/hadoop/etc/hadoop:ro
+      - dp_namenode:/data/hdfs/name
+    healthcheck:
+      <<: *health
+      test: [CMD-SHELL, 'hdfs dfs -ls / >/dev/null']
+
+  datanode:
+    <<: *hadoop
+    hostname: datanode
+    command: [datanode]
+    mem_limit: 1g
+    depends_on:
+      namenode: {condition: service_healthy}
+    volumes:
+      - ./conf/hadoop:/opt/hadoop/etc/hadoop:ro
+      - dp_datanode:/data/hdfs/data
+    healthcheck:
+      <<: *health
+      test: [CMD-SHELL, 'curl -fsS http://localhost:9864/jmx >/dev/null && hdfs dfsadmin -report -live | grep -q "Hostname: datanode"']
+
+  resourcemanager:
+    <<: *hadoop
+    hostname: resourcemanager
+    command: [resourcemanager]
+    mem_limit: 1g
+    ports: ['127.0.0.1:8088:8088']
+    healthcheck:
+      <<: *health
+      test: [CMD-SHELL, 'curl -fsS http://localhost:8088/ws/v1/cluster/info | grep -Eq ''"state"[[:space:]]*:[[:space:]]*"STARTED"''']
+
+  nodemanager:
+    <<: *hadoop
+    hostname: nodemanager
+    command: [nodemanager]
+    mem_limit: 5g
+    depends_on:
+      resourcemanager: {condition: service_healthy}
+      datanode: {condition: service_healthy}
+    volumes:
+      - ./conf/hadoop:/opt/hadoop/etc/hadoop:ro
+      - dp_yarn_local:/data/yarn/local
+      - dp_yarn_logs:/data/yarn/logs
+    healthcheck:
+      <<: *health
+      test: [CMD-SHELL, 'yarn node -list -states RUNNING | grep -Eq "nodemanager:[0-9]+[[:space:]]+RUNNING"']
+
+  hive-metastore:
+    <<: *hive
+    build:
+      context: ./images/hive
+      args:
+        HADOOP_IMAGE: ${HADOOP_IMAGE}
+        HIVE_VERSION: ${HIVE_VERSION:?请配置 Hive 版本}
+        HIVE_DOWNLOAD_URL: ${HIVE_DOWNLOAD_URL:?请配置 Hive 下载地址}
+        MYSQL_CONNECTOR_VERSION: ${MYSQL_CONNECTOR_VERSION:?请配置 MySQL 驱动版本}
+        MYSQL_CONNECTOR_DOWNLOAD_URL: ${MYSQL_CONNECTOR_DOWNLOAD_URL:?请配置 MySQL 驱动下载地址}
+    command: [metastore]
+    mem_limit: 1g
+    depends_on:
+      mysql: {condition: service_healthy}
+      datanode: {condition: service_healthy}
+    healthcheck:
+      <<: *health
+      timeout: 60s
+      start_period: 120s
+      test: [CMD-SHELL, 'HADOOP_HEAPSIZE=128 HADOOP_HEAPSIZE_MAX=128 hive --service cli -e "show databases;" >/dev/null']
+
+  hiveserver2:
+    <<: *hive
+    command: [hiveserver2]
+    mem_limit: 1536m
+    environment:
+      <<: *hive-env
+      HADOOP_HEAPSIZE: '1024'
+      HADOOP_HEAPSIZE_MAX: '1024'
+    ports: ['127.0.0.1:10000:10000', '127.0.0.1:10002:10002']
+    depends_on:
+      hive-metastore: {condition: service_healthy}
+      nodemanager: {condition: service_healthy}
+    healthcheck:
+      <<: *health
+      timeout: 60s
+      start_period: 120s
+      test: [CMD-SHELL, 'beeline -u jdbc:hive2://localhost:10000 -n dp -e "show databases;" >/dev/null']
+
+  gateway:
+    <<: *hive
+    image: ${GATEWAY_IMAGE:?请配置网关镜像}
+    build:
+      context: ./images/gateway
+      args:
+        HIVE_IMAGE: ${HIVE_IMAGE}
+    command: [gateway]
+    mem_limit: 1g
+    depends_on:
+      hiveserver2: {condition: service_healthy}
+    healthcheck:
+      <<: *health
+      timeout: 60s
+      test: [CMD-SHELL, 'hdfs dfs -ls / >/dev/null && yarn node -list -states RUNNING | grep -Eq "nodemanager:[0-9]+[[:space:]]+RUNNING" && beeline -u jdbc:hive2://hiveserver2:10000 -n dp -e "show databases;" >/dev/null']
+
+networks:
+  dp-net:
+    name: dp-net
+
+volumes:
+  dp_mysql: {name: dp_mysql}
+  dp_namenode: {name: dp_namenode}
+  dp_datanode: {name: dp_datanode}
+  dp_yarn_local: {name: dp_yarn_local}
+  dp_yarn_logs: {name: dp_yarn_logs}
