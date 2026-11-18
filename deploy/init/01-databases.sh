@@ -35,3 +35,5 @@ GRANT SELECT, SHOW VIEW ON mes.* TO 'dp_cdc'@'%';
 GRANT SELECT, SHOW VIEW ON qms.* TO 'dp_cdc'@'%';
 GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'dp_cdc'@'%';
 SQL
+# 只在全部建库、建用户及授权语句成功后标记持久卷。Mark completion only after all grants succeed.
+touch /var/lib/mysql/.dp-core-init-complete

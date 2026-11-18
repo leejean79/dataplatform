@@ -3,7 +3,9 @@ FROM ${JDK_IMAGE}
 ARG HADOOP_VERSION
 ARG HADOOP_DOWNLOAD_URL
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates procps tini \
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates procps tini tzdata \
+    && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo Asia/Shanghai > /etc/timezone \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fL --retry 3 "${HADOOP_DOWNLOAD_URL}" -o /tmp/hadoop.tar.gz \
     && tar -xzf /tmp/hadoop.tar.gz -C /opt \

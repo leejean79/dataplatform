@@ -10,19 +10,35 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 if [[ ! -f deploy/.env ]]; then echo '缺少 deploy/.env。' >&2; exit 1; fi
 compose=(docker compose --env-file deploy/.env -f deploy/docker-compose.yml --profile core)
 failed=0
-for service in mysql namenode datanode resourcemanager nodemanager hive-metastore hiveserver2 gateway; do
-  if ! id=$("${compose[@]}" ps -a -q "$service") || [[ -z "$id" ]]; then
-    echo "[失败] ${service}：无法找到容器。"
-    failed=1
-    continue
-  fi
-  # 主动重新执行同一项服务探测，避免使用上一个周期的健康缓存。Run a fresh readiness probe.
-  if probe=$(docker inspect --format '{{index .Config.Healthcheck.Test 1}}' "$id") \
-      && "${compose[@]}" exec -T "$service" bash -o pipefail -c "$probe"; then
-    echo "[通过] ${service}：服务探测成功。"
+# 宿主机与容器都限制执行时间。Bound the CLI call and the probe inside the container.
+check() {
+  local service=$1 description=$2 rc
+  shift 2
+  if timeout -k 5s 75s "${compose[@]}" exec -T "$service" timeout -k 3s 60s "$@"; then
+    printf '[通过] %s：%s\n' "$service" "$description"
   else
-    echo "[失败] ${service}：服务探测失败，请检查容器日志。"
+    rc=$?
+    printf '[失败] %s：%s（退出码 %d，124 表示超时）\n' "$service" "$description" "$rc" >&2
     failed=1
   fi
+}
+check mysql '初始化已完成且七个数据库均可见' bash -o pipefail -c \
+  'test -f /var/lib/mysql/.dp-core-init-complete && MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -N -uroot -e "SHOW DATABASES" | grep -Exc "mes|qms|erp|hive_metastore|dolphinscheduler|datahub|dp_portal" | grep -x 7'
+check namenode '名称节点可列出 HDFS 根目录' hdfs dfs -ls /
+check datanode 'DataNode 已注册为存活节点' bash -o pipefail -c \
+  'hdfs dfsadmin -report -live | grep -E "^Hostname: datanode$"'
+check resourcemanager 'YARN 有 1 个 RUNNING 节点' bash -o pipefail -c \
+  'yarn node -list -states RUNNING | grep -Ex "Total Nodes:[[:space:]]*1"'
+check nodemanager '系统时区为上海，当前偏移为 +0800' bash -ec \
+  'test "$(readlink -f /etc/localtime)" = /usr/share/zoneinfo/Asia/Shanghai && test "$(date +%z)" = +0800'
+check nodemanager 'JVM 默认时区为 Asia/Shanghai' bash -o pipefail -c \
+  'jrunscript -e "print(java.util.TimeZone.getDefault().getID())" | grep -x Asia/Shanghai'
+check hive-metastore 'Hive 元数据库模式验证成功' schematool -dbType mysql -validate
+for service in hiveserver2 gateway; do
+  check "$service" '客户端环境和配置均无元数据库凭据' bash -ec \
+    'test -z "${HIVE_DB_PASSWORD+x}" && test -s "$HIVE_CONF_DIR/hive-site.xml" && ! grep -Eq "javax.jdo.option.Connection|HIVE_DB_PASSWORD" "$HIVE_CONF_DIR/hive-site.xml"'
+  check "$service" '经 HiveServer2 查询数据库返回 default' bash -o pipefail -c \
+    'beeline --silent=true --showHeader=false --outputformat=tsv2 -u jdbc:hive2://hiveserver2:10000 -n dp -e "show databases" | grep -x default'
 done
+check gateway '网关可列出 HDFS 根目录' hdfs dfs -ls /
 exit "$failed"

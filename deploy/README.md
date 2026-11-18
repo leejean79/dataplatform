@@ -26,12 +26,36 @@ sudo docker compose version
 
 ## 2. 克隆仓库与配置变量
 
-在服务器任意目录执行以下命令，需要 GitHub 读取权限及 `/opt` 写入权限，预期检出本任务分支。克隆失败时检查仓库权限与网络；已经存在仓库时在原仓库检出对应分支，不要覆盖已有目录。
+在服务器任意目录执行以下命令，需要 GitHub 读取权限及 `/opt` 写入权限，预期检出已合并的 main 分支。克隆失败时检查仓库权限与网络；已经存在仓库时在原仓库检出对应分支，不要覆盖已有目录。
 
 ```bash
-sudo git clone --branch task/M0-01-core-env https://github.com/leejean79/dataplatform.git /opt/dataplatform
+sudo git clone --branch main https://github.com/leejean79/dataplatform.git /opt/dataplatform
 sudo chown -R "$(id -u):$(id -g)" /opt/dataplatform
 cd /opt/dataplatform
+git rev-parse HEAD
+```
+
+合并前验收时，先从待审 PR 取得编号与完整提交 SHA，在准备环境文件之前执行以下命令。命令会检出该 PR 的提交。若 SHA 校验失败，请停止验收并核对审查版本。合并后的长期部署第 7 项逐一核对五个端口均存在且只监听回环地址。第 8 项在最后一次显式深度检查结束、服务稳定后单独采样。在同一验收记录中注明深度检查结束时间、采样时间、两者间隔以及当时的负载，再附上八个容器的完整输出。
+
+```bash
+date --iso-8601=seconds
+docker stats --no-stream
+```
+
+直接使用上面的 main 分支。
+
+```bash
+PR_NUMBER=输入待审编号
+EXPECTED_SHA=输入待审提交的完整SHA
+git fetch origin "refs/pull/${PR_NUMBER}/head" &&
+  test "$(git rev-parse FETCH_HEAD)" = "$EXPECTED_SHA" &&
+  git switch --detach "$EXPECTED_SHA"
+```
+
+在验收记录中附上实际提交 SHA，再准备环境文件。
+
+```bash
+git rev-parse HEAD
 cp -n deploy/.env.example deploy/.env
 chmod 600 deploy/.env
 ```
@@ -72,7 +96,9 @@ bash deploy/scripts/dp-health.sh core
 
 `dp-up.sh` 和 `dp-down.sh` 接收一个或多个分组参数，目前只接受 `core`；`dp-health.sh` 恰好接收一个 `core` 参数。启动最多等待 900 秒，按服务依赖顺序等待健康检查，不会自动构建镜像。停止脚本只停止八个服务，不删除容器、网络或命名卷。
 
-健康检查会实际连接 MySQL、列出 HDFS 根目录、检查 DataNode 注册及 YARN 的运行节点，并通过 Hive CLI 或 Beeline 查询数据库。`dp-health.sh` 主动执行同一探测，不只读取缓存状态。MySQL 健康检查还确认七个数据库已创建。
+Compose 每 20 秒使用 SQL、HTTP 或 TCP 探测就绪状态，MySQL 须同时满足七个库可见且数据卷中存在初始化完成标记。只有建库、创建账号和全部授权均成功后脚本才写入该标记，DataNode 需在 NameNode 注册。启动脚本在所有服务就绪后调用一次深度检查。也可以手动运行 `dp-health.sh core` 查看 HDFS、YARN、Hive 查询、凭据隔离和 NodeManager 系统与 JVM 时区的实际检查结果。每项容器命令限时 60 秒，失败后脚本继续检查并汇总退出状态。
+
+M0-01 在服务器记录 NodeManager 时区检查输出、CPU、实际内存占用及容器是否发生 OOM。M0-02 再验证 YARN cluster 模式的 driver、executor 和 Spark SQL 会话时区，并用北京时间 00:30 的固定时间点核对分区日期。日期偏移属于待验证风险。
 
 首次启动仅在空的 NameNode 卷中格式化 HDFS；非空且缺少 VERSION 的卷会拒绝启动。Hive 仅在元数据库中没有任何表时初始化模式，已有模式必须通过检查与验证，数据库连接失败不会触发初始化。初始化只创建基础设施元数据，不创建业务表。
 
@@ -84,8 +110,7 @@ bash deploy/scripts/dp-health.sh core
 docker compose -f deploy/docker-compose.yml exec gateway hdfs dfs -ls /
 docker compose -f deploy/docker-compose.yml exec gateway yarn node -list
 docker compose -f deploy/docker-compose.yml exec gateway beeline -u jdbc:hive2://hiveserver2:10000 -e 'show databases'
-ss -ltnp | grep -E '3306|9870|8088|10000'
-docker stats --no-stream
+ss -ltnp | grep -E ':(3306|9870|8088|10000|10002)[[:space:]]'
 ```
 
 直接使用 `-f deploy/docker-compose.yml` 时，Compose 会从编排文件目录读取 `deploy/.env`；脚本显式使用 `--env-file`。验收还必须包含停止再启动检查。端口监听地址只能为 `127.0.0.1`，不能出现 `0.0.0.0`。全部核心服务的内存上限合计为 12.5 GiB，实际占用须以服务器的 `docker stats` 为准。
@@ -116,3 +141,5 @@ docker inspect --format '{{json .State.Health}}' "$(docker compose -f deploy/doc
 - HDFS 使用 `dp_namenode` 与 `dp_datanode`，MySQL 使用 `dp_mysql`，YARN 使用 `dp_yarn_local` 与 `dp_yarn_logs`。必须成套保留 HDFS 的两个卷，不能只重建其中一个。
 
 本任务不提供删除数据卷的脚本。阿里云验收、Hive 兼容性、重启幂等性和实际内存占用在执行前均不能视为已通过。
+
+旧版本初始化的 MySQL 卷没有完成标记，升级后会显示不健康。合并前验收请使用新环境。保留旧数据时，应先核验七个库、六个账号及初始化脚本列出的每项授权，再由负责人补记完成状态。

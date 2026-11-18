@@ -9,7 +9,11 @@ x-hadoop: &hadoop
     HADOOP_HEAPSIZE_MAX: '512'
   networks: [dp-net]
   volumes: &hadoop-conf
-    - ./conf/hadoop:/opt/hadoop/etc/hadoop:ro
+    - ./conf/hadoop/capacity-scheduler.xml:/opt/hadoop/etc/hadoop/capacity-scheduler.xml:ro
+    - ./conf/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+    - ./conf/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+    - ./conf/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml:ro
+    - ./conf/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml:ro
   healthcheck: &health
     interval: 20s
     timeout: 30s
@@ -22,9 +26,12 @@ x-hive: &hive
   environment: &hive-env
     <<: *hadoop-env
     HADOOP_HEAPSIZE: '512'
-    HIVE_DB_PASSWORD: ${HIVE_DB_PASSWORD:?请配置 Hive 密码}
   volumes: &hive-conf
-    - ./conf/hadoop:/opt/hadoop/etc/hadoop:ro
+    - ./conf/hadoop/capacity-scheduler.xml:/opt/hadoop/etc/hadoop/capacity-scheduler.xml:ro
+    - ./conf/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+    - ./conf/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+    - ./conf/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml:ro
+    - ./conf/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml:ro
     - ./conf/hive:/etc/dp-hive:ro
 
 services:
@@ -54,7 +61,7 @@ services:
       - ./init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       <<: *health
-      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -uroot -N -B -e "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN (\"mes\",\"qms\",\"erp\",\"hive_metastore\",\"dolphinscheduler\",\"datahub\",\"dp_portal\")" | grep -qx 7']
+      test: [CMD-SHELL, 'test -f /var/lib/mysql/.dp-core-init-complete && MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -uroot -N -B -e "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN (\"mes\",\"qms\",\"erp\",\"hive_metastore\",\"dolphinscheduler\",\"datahub\",\"dp_portal\")" | grep -qx 7']
 
   namenode:
     <<: *hadoop
@@ -69,11 +76,15 @@ services:
     mem_limit: 1g
     ports: ['127.0.0.1:9870:9870']
     volumes:
-      - ./conf/hadoop:/opt/hadoop/etc/hadoop:ro
+      - ./conf/hadoop/capacity-scheduler.xml:/opt/hadoop/etc/hadoop/capacity-scheduler.xml:ro
+      - ./conf/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./conf/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - ./conf/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml:ro
+      - ./conf/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml:ro
       - dp_namenode:/data/hdfs/name
     healthcheck:
       <<: *health
-      test: [CMD-SHELL, 'hdfs dfs -ls / >/dev/null']
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9870/webhdfs/v1/?op=GETFILESTATUS >/dev/null"]
 
   datanode:
     <<: *hadoop
@@ -83,11 +94,15 @@ services:
     depends_on:
       namenode: {condition: service_healthy}
     volumes:
-      - ./conf/hadoop:/opt/hadoop/etc/hadoop:ro
+      - ./conf/hadoop/capacity-scheduler.xml:/opt/hadoop/etc/hadoop/capacity-scheduler.xml:ro
+      - ./conf/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./conf/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - ./conf/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml:ro
+      - ./conf/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml:ro
       - dp_datanode:/data/hdfs/data
     healthcheck:
       <<: *health
-      test: [CMD-SHELL, 'curl -fsS http://localhost:9864/jmx >/dev/null && hdfs dfsadmin -report -live | grep -q "Hostname: datanode"']
+      test: ["CMD-SHELL", "curl -fsS \"http://namenode:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState\" | grep -Eq '\"NumLiveDataNodes\"[[:space:]]*:[[:space:]]*1[[:space:]]*[,}]'"]
 
   resourcemanager:
     <<: *hadoop
@@ -108,12 +123,16 @@ services:
       resourcemanager: {condition: service_healthy}
       datanode: {condition: service_healthy}
     volumes:
-      - ./conf/hadoop:/opt/hadoop/etc/hadoop:ro
+      - ./conf/hadoop/capacity-scheduler.xml:/opt/hadoop/etc/hadoop/capacity-scheduler.xml:ro
+      - ./conf/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./conf/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - ./conf/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml:ro
+      - ./conf/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml:ro
       - dp_yarn_local:/data/yarn/local
       - dp_yarn_logs:/data/yarn/logs
     healthcheck:
       <<: *health
-      test: [CMD-SHELL, 'yarn node -list -states RUNNING | grep -Eq "nodemanager:[0-9]+[[:space:]]+RUNNING"']
+      test: ["CMD-SHELL", "curl -fsS \"http://resourcemanager:8088/ws/v1/cluster/nodes?states=RUNNING\" | grep -Eq '\"nodeHostName\"[[:space:]]*:[[:space:]]*\"nodemanager\"'"]
 
   hive-metastore:
     <<: *hive
@@ -125,6 +144,9 @@ services:
         HIVE_DOWNLOAD_URL: ${HIVE_DOWNLOAD_URL:?请配置 Hive 下载地址}
         MYSQL_CONNECTOR_VERSION: ${MYSQL_CONNECTOR_VERSION:?请配置 MySQL 驱动版本}
         MYSQL_CONNECTOR_DOWNLOAD_URL: ${MYSQL_CONNECTOR_DOWNLOAD_URL:?请配置 MySQL 驱动下载地址}
+    environment:
+      <<: *hive-env
+      HIVE_DB_PASSWORD: ${HIVE_DB_PASSWORD:?请配置 Hive 密码}
     command: [metastore]
     mem_limit: 1g
     depends_on:
@@ -134,7 +156,7 @@ services:
       <<: *health
       timeout: 60s
       start_period: 120s
-      test: [CMD-SHELL, 'HADOOP_HEAPSIZE=128 HADOOP_HEAPSIZE_MAX=128 hive --service cli -e "show databases;" >/dev/null']
+      test: ["CMD-SHELL", "bash -c 'true >/dev/tcp/localhost/9083'"]
 
   hiveserver2:
     <<: *hive
@@ -152,7 +174,7 @@ services:
       <<: *health
       timeout: 60s
       start_period: 120s
-      test: [CMD-SHELL, 'beeline -u jdbc:hive2://localhost:10000 -n dp -e "show databases;" >/dev/null']
+      test: ["CMD-SHELL", "bash -c 'true >/dev/tcp/localhost/10000'"]
 
   gateway:
     <<: *hive
@@ -168,7 +190,7 @@ services:
     healthcheck:
       <<: *health
       timeout: 60s
-      test: [CMD-SHELL, 'hdfs dfs -ls / >/dev/null && yarn node -list -states RUNNING | grep -Eq "nodemanager:[0-9]+[[:space:]]+RUNNING" && beeline -u jdbc:hive2://hiveserver2:10000 -n dp -e "show databases;" >/dev/null']
+      test: ["CMD-SHELL", "bash -c 'true >/dev/tcp/hiveserver2/10000'"]
 
 networks:
   dp-net:
