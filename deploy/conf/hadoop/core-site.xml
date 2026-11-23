@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 核心组共享配置。Shared core configuration. -->
+<configuration>
+  <property><name>fs.defaultFS</name><value>hdfs://namenode:8020</value></property>
+  <property><name>hadoop.tmp.dir</name><value>/tmp/hadoop-dp</value></property>
+  <property><name>hadoop.http.staticuser.user</name><value>dp</value></property>
+</configuration>
