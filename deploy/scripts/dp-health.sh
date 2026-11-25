@@ -14,7 +14,7 @@ failed=0
 check() {
   local service=$1 description=$2 rc
   shift 2
-  if timeout -k 5s 75s "${compose[@]}" exec -T "$service" timeout -k 3s 60s "$@"; then
+  if timeout -k 5s 75s "${compose[@]}" exec -T --interactive=false "$service" timeout -k 3s 60s "$@"; then
     printf '[通过] %s：%s\n' "$service" "$description"
   else
     rc=$?
