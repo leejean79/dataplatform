@@ -4,4 +4,6 @@
   <property><name>fs.defaultFS</name><value>hdfs://namenode:8020</value></property>
   <property><name>hadoop.tmp.dir</name><value>/tmp/hadoop-dp</value></property>
   <property><name>hadoop.http.staticuser.user</name><value>dp</value></property>
+  <!-- 通知接口校验 dp 的来源主机。Restrict the dp notification caller to HiveServer2. -->
+  <property><name>hadoop.proxyuser.dp.hosts</name><value>hiveserver2</value></property>
 </configuration>
