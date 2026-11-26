@@ -183,6 +183,16 @@ services:
       context: ./images/gateway
       args:
         HIVE_IMAGE: ${HIVE_IMAGE}
+        SPARK_VERSION: ${SPARK_VERSION:?请配置 Spark 版本}
+        SPARK_DOWNLOAD_URL: ${SPARK_DOWNLOAD_URL:?请配置 Spark 下载地址}
+    volumes:
+      - ./conf/hadoop/capacity-scheduler.xml:/opt/hadoop/etc/hadoop/capacity-scheduler.xml:ro
+      - ./conf/hadoop/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./conf/hadoop/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - ./conf/hadoop/mapred-site.xml:/opt/hadoop/etc/hadoop/mapred-site.xml:ro
+      - ./conf/hadoop/yarn-site.xml:/opt/hadoop/etc/hadoop/yarn-site.xml:ro
+      - ./conf/hive:/etc/dp-hive:ro
+      - ./conf/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
     command: [gateway]
     mem_limit: 1g
     depends_on:
