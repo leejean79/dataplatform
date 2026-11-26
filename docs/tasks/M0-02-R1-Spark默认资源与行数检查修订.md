@@ -17,7 +17,7 @@ M0-02。
 
 1. 修改 `deploy/conf/spark/spark-defaults.conf`，把 `spark.driver.memory` 由 `1g` 改为 `512m`。其余配置项保持不变。
 2. 修改 `deploy/scripts/smoke-offline.sh`，把通过 HiveServer2 执行的 `SELECT COUNT(*) FROM dp_smoke.t_offline` 改为 `SELECT id FROM dp_smoke.t_offline`，由脚本统计返回的行数并且要求等于 3。分区检查保持不变。
-3. 在 `smoke-offline.sh` 中增加一项输出：作业实际分配到的执行器数量。数量可以从作业已经写入 HDFS 的时区证据中统计，不需要修改 `OfflineSmoke.scala`。该数量只输出，不作为通过条件。
+3. 在 `smoke-offline.sh` 中增加一项输出：本轮参与时区探测的执行器数量及其编号。数量从作业已经写入 HDFS 的时区证据中统计，不需要修改 `OfflineSmoke.scala`。该数量只输出，不作为脚本的通过条件，脚本中不得写死期望值。
 4. 更新 `deploy/README.md` 中与上述两处有关的说明和命令。
 
 ## 明确不做的范围
@@ -35,10 +35,15 @@ M0-02。
 | --- | --- | --- |
 | 1 | `bash -n deploy/scripts/smoke-offline.sh && git diff --check` | 没有输出，退出码为 0。 |
 | 2 | `docker compose -f deploy/docker-compose.yml exec gateway spark-submit --version` | Spark 版本为 3.5.7，Scala 版本为 2.12。 |
-| 3 | `bash deploy/scripts/smoke-offline.sh` | 最后一行说明测试通过，退出码为 0，输出中的执行器数量为 2。 |
+| 3 | `bash deploy/scripts/smoke-offline.sh` | 最后一行说明测试通过，退出码为 0。输出中参与探测的执行器数量预期为 2，实际数量按照下文的规则处理。 |
 | 4 | 再次执行 `bash deploy/scripts/smoke-offline.sh` | 第二次执行仍然通过。 |
-| 5 | `docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates FINISHED` | 两次冒烟测试提交的应用的最终状态均为 SUCCEEDED，并且列表中没有 MapReduce 类型的应用。 |
+| 5 | `docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates FINISHED` | 本轮两次冒烟测试提交的应用的最终状态均为 SUCCEEDED。历史应用保持原样，不需要清理。 |
 | 6 | `docker compose -f deploy/docker-compose.yml exec gateway beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000 -e "SELECT id FROM dp_smoke.t_offline"` | 输出 3 行。 |
+验收证据的三条补充规则如下：
+
+1. **应用清单的前后对照。** 在执行第 3 条命令之前，以及在执行第 6 条命令之后，各执行一次 `docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates ALL` 并且记录输出。合并请求中按照应用编号列出本轮新增的应用，新增的应用应当只有两个 Spark 应用，不得出现 MapReduce 类型的应用。只有这一对照能够证明第 6 条查询没有启动 MapReduce 作业。
+2. **执行器数量的解释。** 现有的探测只记录实际执行过探测任务的执行器。观测到 2 个，证明两个执行器都已分配并且参与了计算。只观测到 1 个，不能据此断定 YARN 只分配了 1 个执行器。
+3. **观测到 1 个执行器时的处理。** 保留脚本按照其他断言得到的退出码，在合并请求中写明“预期 2，实测 1”，并且附上该应用的容器清单作为证据，例如 `yarn logs -applicationId <应用编号> -show_application_log_info` 的输出。不得为了凑出 2 而修改资源配置，也不得把这种情况写成通过。是否通过由架构师根据证据判断。
 
 ## 交付物
 

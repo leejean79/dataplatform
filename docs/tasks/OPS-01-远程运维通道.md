@@ -42,7 +42,9 @@
 | 2 | `bash deploy/scripts/refresh-ecs-ip.sh --dry-run` | 输出实例状态为运行中以及公网地址，`~/.ssh/config` 没有变化。 |
 | 3 | `bash deploy/scripts/refresh-ecs-ip.sh` | 输出更新结果，最后一行显示 `ssh dp-ecs hostname` 返回 `dataplatform-test-01`。 |
 | 4 | `ssh dp-ecs 'cd /opt/dataplatform && git rev-parse --short HEAD'` | 返回服务器上仓库当前的提交编号。 |
-| 5 | `git grep -nE 'LTAI\|i-[0-9a-z]{10,}\|BEGIN .*PRIVATE KEY'` | 没有输出，证明仓库中没有访问密钥、实例编号和私钥。 |
+| 5 | `git grep -lE 'LTAI[0-9A-Za-z]{12,}\|i-[0-9a-z]{10,}\|BEGIN [A-Z ]*PRIVATE KEY-----'; echo "退出码=$?"` | 没有列出任何文件，并且退出码为 1。退出码 1 表示没有匹配，属于预期结果。退出码为 0 表示存在疑似凭据，退出码为 2 或更大表示命令执行出错，这两种情况都不算通过。 |
+
+第 5 条命令使用 `-l` 参数，只列出文件名，不输出匹配的内容。命令中的三个表达式不会匹配本任务卡自身，因此不需要排除任何文件，也不得为了通过检查而修改 `docs/` 目录。如果列出了文件，只在合并请求中报告文件名，不得粘贴匹配的行。
 
 合并请求中的验收输出必须把公网地址替换为 `<公网地址>`。
 
