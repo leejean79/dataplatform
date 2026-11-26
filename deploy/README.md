@@ -1,6 +1,6 @@
-# 核心组环境（M0-01）
+# 核心组环境与 Spark 接入（M0-01、M0-02）
 
-本目录实现 MySQL、NameNode、DataNode、ResourceManager、NodeManager、Hive Metastore、HiveServer2 和作业提交网关共八个服务。网关目前只提供 Hadoop 与 Hive 客户端。正式设计见 `docs/01-环境与部署设计.md`。
+本目录实现 MySQL、NameNode、DataNode、ResourceManager、NodeManager、Hive Metastore、HiveServer2 和作业提交网关共八个服务。网关提供 Hadoop、Hive 和 Spark 3.5.7（Scala 2.12）客户端。正式设计见 `docs/01-环境与部署设计.md`。
 
 ## 1. 准备服务器
 
@@ -78,7 +78,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml build gateway
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml pull mysql
 ```
 
-必须依次构建：Hive 基于第一步构建的 Hadoop 镜像，网关基于第二步构建的 Hive 镜像。当前任务不使用 Spark 或 Flink。
+必须依次构建：Hive 基于第一步构建的 Hadoop 镜像，网关基于第二步构建的 Hive 镜像。Gateway 构建时检查 Spark SQL 的版本与 Scala 二进制版本。
 
 Hadoop 和 Hive 的默认发行包地址是 Apache 官方归档站，MySQL 驱动来自 Maven 中央仓库。在受限网络下，应在 `.env` 中设置已同步的阿里云镜像地址及可访问的下载地址。此时构建仍需能访问基础镜像的软件源；本任务未实测阿里云网络。
 
@@ -143,3 +143,23 @@ docker inspect --format '{{json .State.Health}}' "$(docker compose -f deploy/doc
 本任务不提供删除数据卷的脚本。阿里云验收、Hive 兼容性、重启幂等性和实际内存占用在执行前均不能视为已通过。
 
 旧版本初始化的 MySQL 卷没有完成标记，升级后会显示不健康。合并前验收请使用新环境。保留旧数据时，应先核验七个库、六个账号及初始化脚本列出的每项授权，再由负责人补记完成状态。
+
+## 7. 在阿里云验证 Spark 离线链路
+
+在服务器 `/opt/dataplatform` 执行。前提是 M0-01 核心组健康，当前检出待验收的 M0-02 提交。已有部署请把模板中的 `SPARK_VERSION`、`SPARK_DOWNLOAD_URL` 加入现有 `deploy/.env`，并更新 `GATEWAY_IMAGE` 标签，保留已有密码和镜像源。首次构建需要能够下载对应的 Hadoop 3 版 Spark 发行包。
+
+```bash
+git rev-parse HEAD
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml build gateway
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --no-deps --wait gateway
+docker compose -f deploy/docker-compose.yml exec gateway spark-submit --version
+bash deploy/scripts/smoke-offline.sh && bash deploy/scripts/smoke-offline.sh
+docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates FINISHED
+docker compose -f deploy/docker-compose.yml exec gateway beeline -u jdbc:hive2://hiveserver2:10000 -e "SELECT COUNT(*) FROM dp_smoke.t_offline"
+```
+
+脚本只重建专用测试表 `dp_smoke.t_offline`，请串行执行。SQL 文件打包在 Gateway 的 Scala 提交入口中，由远程 driver 执行。Gateway 随作业分发镜像内的 Hive 客户端依赖，YARN 将其解压至应用工作目录，driver 通过 Metastore 服务名访问元数据。
+
+每次验收应记录独立的 Application ID、最终状态、耗时、driver 与参与探测的 executor JVM 的实际时区、Spark SQL 会话时区、HiveServer2 查询行数与唯一分区。两次都应返回 0、状态 SUCCEEDED、行数 3，分区为 `dt=2026-11-25`（输入为北京时间当日 00:30，即 UTC 前一日 16:30）。
+
+资源请求为 1 GB driver 和两个各 1 GB、1 核的 executor。YARN 还会计入容器内存开销并按分配粒度取整，在当前 4096 MB 节点上，实际可同时运行的 executor 可能少于请求数。请保留脚本中实际参与探测的 executor ID。若提交失败，脚本保留 spark-submit 完整输出，并在取得应用 ID 后导出 YARN 日志。如果仍无法访问 Hive 3.1.3 Metastore，请在合并请求中附完整错误与应用日志，由架构师评审版本或配置变更。
