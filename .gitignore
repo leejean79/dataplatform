@@ -35,6 +35,7 @@ derby.log
 .env
 .env.*
 !.env.example
+*.pem
 
 # 前端 / Frontend
 node_modules/

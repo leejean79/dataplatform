@@ -1,0 +1,56 @@
+# OPS-01 远程运维通道
+
+## 目标
+
+项目负责人在本地电脑上执行一条命令，就能把阿里云测试服务器当前的公网地址同步到本机的 SSH 配置中，使 `ssh dp-ecs` 始终可用。开发者此后通过该别名登录服务器执行环境验收。
+
+## 前置任务
+
+无。项目负责人需要事先在本机完成三项准备：安装阿里云命令行工具，创建 `~/.dataplatform-aliyun.conf`，以及在 `~/.ssh/config` 中配置名为 `dp-ecs` 的主机段。这三项准备涉及密钥，由项目负责人手动完成，开发者不得代为创建或读取。
+
+## 依据的设计文档
+
+- `AGENTS.md` 第 12 节与第 13 节。
+- `docs/08-开发规范与任务拆解.md` 第 6 节。
+
+## 实现范围
+
+1. 新增 `deploy/scripts/refresh-ecs-ip.sh`，执行环境是项目负责人的本地电脑（macOS），行为如下：
+   - 从 `~/.dataplatform-aliyun.conf` 读取 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_REGION` 和 `ECS_INSTANCE_ID` 四个变量。该文件不存在或者权限不是 600 时，输出说明并且以非零退出码结束，不得自动修改权限。
+   - 通过阿里云命令行工具的 `aliyun ecs DescribeInstances` 查询该实例的状态与公网地址。访问密钥只通过环境变量传给该命令，不得写入任何文件，也不得输出。
+   - 实例不处于运行状态或者没有公网地址时，输出说明并且以非零退出码结束。
+   - 把 `~/.ssh/config` 中 `Host dp-ecs` 主机段的 `HostName` 更新为查询到的公网地址。只修改这一行，找不到该主机段时输出说明并且以非零退出码结束，不得自动创建主机段。
+   - 最后执行 `ssh dp-ecs hostname` 验证连通性，并且输出结果。
+   - 支持 `--dry-run` 参数：只输出实例状态与公网地址，不修改任何文件。
+2. 脚本解析命令行工具返回的 JSON 时，必须通过标准输入或者文件把内容交给解析程序，不得把返回内容直接拼接进程序代码。
+3. 更新 `deploy/README.md`，增加“远程运维通道”一节，说明三项准备的内容、配置文件与主机段的示例（示例中只使用占位符），以及脚本的用法。
+
+## 明确不做的范围
+
+- 不支持多台实例，不修改 `deploy/.env`。
+- 不创建或修改阿里云上的任何资源，脚本只使用只读接口。
+- 不处理 SSH 私钥，不在仓库中保存任何密钥、访问密钥、实例编号和公网地址。
+- 不在服务器上做任何改动。
+
+## 验收命令
+
+以下命令的执行环境均为项目负责人的本地电脑，工作目录为仓库根目录。
+
+| 序号 | 命令 | 期望输出 |
+| --- | --- | --- |
+| 1 | `bash -n deploy/scripts/refresh-ecs-ip.sh && git diff --check` | 没有输出，退出码为 0。 |
+| 2 | `bash deploy/scripts/refresh-ecs-ip.sh --dry-run` | 输出实例状态为运行中以及公网地址，`~/.ssh/config` 没有变化。 |
+| 3 | `bash deploy/scripts/refresh-ecs-ip.sh` | 输出更新结果，最后一行显示 `ssh dp-ecs hostname` 返回 `dataplatform-test-01`。 |
+| 4 | `ssh dp-ecs 'cd /opt/dataplatform && git rev-parse --short HEAD'` | 返回服务器上仓库当前的提交编号。 |
+| 5 | `git grep -nE 'LTAI\|i-[0-9a-z]{10,}\|BEGIN .*PRIVATE KEY'` | 没有输出，证明仓库中没有访问密钥、实例编号和私钥。 |
+
+合并请求中的验收输出必须把公网地址替换为 `<公网地址>`。
+
+## 交付物
+
+- `deploy/scripts/refresh-ecs-ip.sh` 和更新后的 `deploy/README.md`。
+
+## 已知风险与需要反馈的问题
+
+1. 如果命令行工具返回的 JSON 结构与预期不同，请在合并请求中说明实际结构中用到的字段，不要粘贴完整的返回内容。
+2. 如果服务器绑定的是弹性公网地址而不是普通公网地址，查询字段会不同，请说明实际情况。
