@@ -163,3 +163,27 @@ docker compose -f deploy/docker-compose.yml exec gateway beeline -u jdbc:hive2:/
 每次验收应记录独立的 Application ID、最终状态、耗时、driver 与参与探测的 executor JVM 的实际时区、Spark SQL 会话时区、HiveServer2 查询行数与唯一分区。两次都应返回 0、状态 SUCCEEDED、行数 3，分区为 `dt=2026-11-25`（输入为北京时间当日 00:30，即 UTC 前一日 16:30）。
 
 资源请求为 1 GB driver 和两个各 1 GB、1 核的 executor。YARN 还会计入容器内存开销并按分配粒度取整，在当前 4096 MB 节点上，实际可同时运行的 executor 可能少于请求数。请保留脚本中实际参与探测的 executor ID。若提交失败，脚本保留 spark-submit 完整输出，并在取得应用 ID 后导出 YARN 日志。如果仍无法访问 Hive 3.1.3 Metastore，请在合并请求中附完整错误与应用日志，由架构师评审版本或配置变更。
+
+## 远程运维通道
+
+项目负责人在本机 macOS 安装阿里云命令行工具 `aliyun`，确保 Python 3 和 OpenSSH 可用，并为查询账号授予 ECS 的 DescribeInstances 只读权限。
+
+负责人手动准备仅自己可读写（权限为 600）的 `~/.dataplatform-aliyun.conf`。该文件使用 Shell 变量赋值语法，示例如下。
+
+```bash
+ALIYUN_ACCESS_KEY_ID='<访问密钥标识>'
+ALIYUN_ACCESS_KEY_SECRET='<访问密钥秘密>'
+ALIYUN_REGION='<地域>'
+ECS_INSTANCE_ID='<实例编号>'
+```
+
+负责人还需在 `~/.ssh/config` 中准备独立的主机段，并预先确认服务器的 SSH 主机指纹。
+
+```sshconfig
+Host dp-ecs
+    HostName <公网地址>
+    User <登录用户>
+    IdentityFile <本机私钥路径>
+```
+
+在本地仓库根目录执行 `bash deploy/scripts/refresh-ecs-ip.sh --dry-run`，确认实例运行状态和当前公网地址后，再执行 `bash deploy/scripts/refresh-ecs-ip.sh`。后者同步已有主机段的 HostName 并执行 `ssh dp-ecs hostname`。查询、配置校验或连接失败时脚本返回非零；请保留 SSH 错误并停止后续远程操作。提交验收输出前将公网地址替换为 `<公网地址>`。
