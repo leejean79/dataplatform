@@ -21,7 +21,7 @@ M0-01。
 
 ## 明确不做的范围
 
-- 不编写任何 Java 代码，冒烟测试使用 Spark 自带的 `spark-sql` 或者 `spark-submit` 配合 SQL 文件完成。
+- 不编写业务代码，不修改 Maven 工程中的任何模块。`spark-sql` 命令不支持 cluster 模式，因此允许在网关镜像中保留一个只用于冒烟测试的最小提交入口，它在构建镜像时编译。本条在 2026-11-26 修订，原先“只使用 `spark-sql`”的要求与 cluster 模式互相矛盾。
 - 不修改 Maven 工程中的任何模块。
 - 不部署 Spark 历史服务器。
 
@@ -35,7 +35,7 @@ M0-01。
 | 2 | `bash deploy/scripts/smoke-offline.sh` | 脚本输出每个步骤的结果，最后一行明确说明测试通过，退出码为 0。 |
 | 3 | 再次执行 `bash deploy/scripts/smoke-offline.sh` | 第二次执行仍然通过，证明脚本可以重复执行。 |
 | 4 | `docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates FINISHED` | 输出中包含冒烟测试提交的应用，最终状态为 SUCCEEDED。 |
-| 5 | `docker compose -f deploy/docker-compose.yml exec gateway beeline -u jdbc:hive2://hiveserver2:10000 -e "select count(*) from dp_smoke.t_offline"` | 查询结果为 3。 |
+| 5 | `docker compose -f deploy/docker-compose.yml exec gateway beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000 -e "SELECT id FROM dp_smoke.t_offline"` | 输出 3 行，并且 HiveServer2 没有为这条查询启动 MapReduce 作业。 |
 
 ## 交付物
 
@@ -47,3 +47,4 @@ M0-01。
 1. 如果按照设计文档第 7.4 节配置之后 Spark 仍然无法访问 Hive 3.1.3 的 Metastore，请停止工作并且在合并请求中附上完整的错误信息，由架构师决定是否调整版本基线。
 2. 请反馈一次冒烟测试从提交到结束所用的时间。
 3. 请说明 Spark 写入的表在 HiveServer2 中查询时是否出现过格式或权限方面的问题。
+4. 请反馈作业实际分配到的执行器数量，以及驱动程序在 512 MB 内存下是否出现过内存不足。
