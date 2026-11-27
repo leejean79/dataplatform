@@ -25,10 +25,24 @@ fi
 report=$("${gateway[@]}" yarn application -status "$app")
 echo "$report"
 grep -Eq 'Final-State[[:space:]]*:[[:space:]]*SUCCEEDED' <<<"$report"
-"${gateway[@]}" hdfs dfs -cat "/tmp/dp_smoke/$app.txt"
+evidence=$("${gateway[@]}" hdfs dfs -cat "/tmp/dp_smoke/$app.txt")
+echo "$evidence"
+# 只统计证据中的执行器。Count only executors that ran the probe.
+awk '{
+  for (i = 1; i <= NF; i++) {
+    if ($i ~ /^executor\[[^]]+\]=/) {
+      split($i, fields, /[][]/)
+      if (!seen[fields[2]]++) {
+        ids = ids (count ? ", " : "") fields[2]
+        count++
+      }
+    }
+  }
+}
+END { printf "参与时区探测的执行器数量=%d，编号=%s\n", count, ids }' <<<"$evidence"
 beeline=(beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000)
-count=$("${gateway[@]}" "${beeline[@]}" -e 'SELECT COUNT(*) FROM dp_smoke.t_offline')
-echo "HiveServer2 COUNT(*)=$count"
+count=$("${gateway[@]}" "${beeline[@]}" -e 'SELECT id FROM dp_smoke.t_offline' | awk 'END { print NR }')
+echo "HiveServer2 查询返回行数=$count"
 [[ "$count" == 3 ]]
 part=$("${gateway[@]}" "${beeline[@]}" -e 'SHOW PARTITIONS dp_smoke.t_offline')
 echo "北京时间 2026-11-25 00:30 对应分区：$part"
