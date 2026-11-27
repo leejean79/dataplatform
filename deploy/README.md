@@ -184,6 +184,9 @@ Host dp-ecs
     HostName <公网地址>
     User <登录用户>
     IdentityFile <本机私钥路径>
+    IdentitiesOnly yes
 ```
 
 在本地仓库根目录执行 `bash deploy/scripts/refresh-ecs-ip.sh --dry-run`，确认实例运行状态和当前公网地址后，再执行 `bash deploy/scripts/refresh-ecs-ip.sh`。后者同步已有主机段的 HostName 并执行 `ssh dp-ecs hostname`。查询、配置校验或连接失败时脚本返回非零；请保留 SSH 错误并停止后续远程操作。提交验收输出前将公网地址替换为 `<公网地址>`。
+
+查询失败时，脚本会在提示后保留最多三行经过筛选的 CLI 错误。若提示地域为空，请核对地域参数并确认调用未指定 `--mode AK`；若错误码表明访问被拒绝，请核对账号的 `ecs:DescribeInstances` 权限。提交排查记录时仅附脱敏后的错误行。
