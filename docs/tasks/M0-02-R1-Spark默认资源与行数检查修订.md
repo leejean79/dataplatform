@@ -19,13 +19,18 @@ M0-02。
 2. 修改 `deploy/scripts/smoke-offline.sh`，把通过 HiveServer2 执行的 `SELECT COUNT(*) FROM dp_smoke.t_offline` 改为 `SELECT id FROM dp_smoke.t_offline`，由脚本统计返回的行数并且要求等于 3。分区检查保持不变。
 3. 在 `smoke-offline.sh` 中增加一项输出：本轮参与时区探测的执行器数量及其编号。数量从作业已经写入 HDFS 的时区证据中统计，不需要修改 `OfflineSmoke.scala`。该数量只输出，不作为脚本的通过条件，脚本中不得写死期望值。
 4. 更新 `deploy/README.md` 中与上述两处有关的说明和命令。
+5. 在 `deploy/conf/spark/spark-defaults.conf` 中增加 `spark.sql.warehouse.dir`，取值为 `hdfs://namenode:8020/user/hive/warehouse`。本项以及第 6 项至第 8 项在 2026-11-27 追加，原因见下文“第一轮服务器验收的结论”。
+6. 修改 `deploy/images/gateway/smoke.sql`：在开头用 `DROP DATABASE IF EXISTS dp_smoke CASCADE` 删除冒烟测试数据库，然后用不带 `IF NOT EXISTS` 的 `CREATE DATABASE dp_smoke` 重建。这样每次冒烟测试都从空数据库开始，并且能够清除此前位置错误的数据库。
+7. 修改 `deploy/images/gateway/Dockerfile` 中的 `PATH`，把 Spark 的命令目录放到末尾，使 `beeline` 命令指向 Hive 自带的版本，`spark-submit` 命令仍然可用。`smoke-offline.sh` 中已经写明的 `/opt/hive/bin/beeline` 可以保留。
+8. 在 `smoke-offline.sh` 中增加一项断言：`hdfs dfs -test -d /user/hive/warehouse/dp_smoke.db/t_offline/dt=2026-11-25` 成功，证明数据写入了 HDFS 上的数据仓库目录。
 
 ## 明确不做的范围
 
-- 不修改 `OfflineSmoke.scala`、`smoke.sql` 和网关镜像的构建文件，除非第 3 项确实无法在不修改它们的前提下实现，这种情况应当在合并请求中说明。
+- 不修改 `OfflineSmoke.scala`。`smoke.sql` 和网关镜像的构建文件只允许按照实现范围第 6 项与第 7 项修改。
 - 不修改 YARN 的内存配置和任何容器的内存上限。
 - 不处理此前记录的非阻塞建议，包括安装包校验、镜像标签命名和依赖包预先上传到 HDFS。
 - 不修改 `docs/` 目录下的任何文件。
+- 不清理节点管理器本地磁盘上遗留的 `spark-warehouse` 目录。删除数据目录属于 `AGENTS.md` 第 13 节禁止的操作，只需要在合并请求中报告这些目录的路径与大小，由项目负责人决定是否清理。
 
 ## 验收命令
 
@@ -39,6 +44,9 @@ M0-02。
 | 4 | 再次执行 `bash deploy/scripts/smoke-offline.sh` | 第二次执行仍然通过。 |
 | 5 | `docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates FINISHED` | 本轮两次冒烟测试提交的应用的最终状态均为 SUCCEEDED。历史应用保持原样，不需要清理。 |
 | 6 | `docker compose -f deploy/docker-compose.yml exec gateway beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000 -e "SELECT id FROM dp_smoke.t_offline"` | 输出 3 行。 |
+| 7 | `bash deploy/scripts/dp-health.sh core` | 十二项检查全部通过，其中包括网关经由 HiveServer2 查询数据库的检查。 |
+| 8 | `docker compose -f deploy/docker-compose.yml exec gateway bash -lc "command -v beeline spark-submit"` | 依次输出 `/opt/hive/bin/beeline` 和 `/opt/spark/bin/spark-submit`。 |
+| 9 | `docker compose -f deploy/docker-compose.yml exec gateway beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000 -e "DESCRIBE DATABASE dp_smoke"` | 输出中数据库的位置为 `hdfs://namenode:8020/user/hive/warehouse/dp_smoke.db`。 |
 验收证据的三条补充规则如下：
 
 1. **应用清单的前后对照。** 在执行第 3 条命令之前，以及在执行第 6 条命令之后，各执行一次 `docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates ALL` 并且记录输出。合并请求中按照应用编号列出本轮新增的应用，新增的应用应当只有两个 Spark 应用，不得出现 MapReduce 类型的应用。只有这一对照能够证明第 6 条查询没有启动 MapReduce 作业。
@@ -55,3 +63,14 @@ M0-02。
 2. 如果写入分区表时出现“Dynamic partition strict mode”一类的错误，请附上完整的错误信息，并且说明拟采用的配置项，由架构师确认之后再修改。
 3. 如果 Spark 无法访问 Hive 3.1.3 的 Metastore，请附上完整的 `spark-submit` 输出与 YARN 应用日志，不要自行调整版本基线。
 4. 请反馈每次冒烟测试从提交到结束所用的时间。
+5. 如果 `DROP DATABASE IF EXISTS dp_smoke CASCADE` 因为数据库的位置是本地路径而失败，请停止并且附上完整的错误信息。不得直接修改 Metastore 的数据库表，处理方式由架构师决定。
+
+## 第一轮服务器验收的结论
+
+提交 `f630595` 的服务器验收没有通过，合并请求 12 如实记录了结果。架构师的结论如下：
+
+1. 驱动程序 512 MB 配合两个执行器的资源设定已经得到验证：没有出现内存不足，两个执行器都参与了计算，没有出现动态分区严格模式错误，Spark 能够访问 Hive 3.1.3 的 Metastore。
+2. 建表失败的根本原因是设计文档遗漏了 `spark.sql.warehouse.dir`，数据库 `dp_smoke` 的位置被登记为 YARN 容器的本地目录。这是设计的错误，不是实现的错误。
+3. 网关深度检查失败和行数统计出错的原因是 Spark 自带的 `beeline` 在 `PATH` 中排在 Hive 的 `beeline` 之前。这一问题自 M0-02 合并起就存在于 `main` 分支。
+
+实现范围第 5 项至第 8 项用于修正上述问题。开发者在合并请求 12 的同一个分支上继续提交，重建网关镜像之后重新执行全部九条验收命令。
