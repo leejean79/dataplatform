@@ -40,7 +40,7 @@ awk '{
   }
 }
 END { printf "参与时区探测的执行器数量=%d，编号=%s\n", count, ids }' <<<"$evidence"
-beeline=(beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000)
+beeline=(/opt/hive/bin/beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000)
 count=$("${gateway[@]}" "${beeline[@]}" -e 'SELECT id FROM dp_smoke.t_offline' | awk 'END { print NR }')
 echo "HiveServer2 查询返回行数=$count"
 [[ "$count" == 3 ]]

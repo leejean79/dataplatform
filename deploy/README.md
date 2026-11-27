@@ -156,7 +156,7 @@ docker compose -f deploy/docker-compose.yml exec gateway spark-submit --version
 docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates ALL
 bash deploy/scripts/smoke-offline.sh && bash deploy/scripts/smoke-offline.sh
 docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates FINISHED
-docker compose -f deploy/docker-compose.yml exec gateway beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000 -e "SELECT id FROM dp_smoke.t_offline"
+docker compose -f deploy/docker-compose.yml exec gateway /opt/hive/bin/beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000 -e "SELECT id FROM dp_smoke.t_offline"
 docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates ALL
 ```
 
