@@ -9,7 +9,7 @@ RUN curl -fL --retry 3 "${SPARK_DOWNLOAD_URL}" -o /tmp/spark.tgz \
     && test -f "/opt/spark/jars/spark-sql_2.12-${SPARK_VERSION}.jar" \
     && rm /tmp/spark.tgz \
     && tar -czf /opt/spark/hive-client.tar.gz -C /opt/hive/lib .
-ENV SPARK_HOME=/opt/spark PATH="/opt/spark/bin:${PATH}"
+ENV SPARK_HOME=/opt/spark PATH="${PATH}:/opt/spark/bin"
 # 使用发行包自带的 Scala 编译器构建 SQL 提交入口。Compile with Spark's matching Scala compiler.
 COPY OfflineSmoke.scala smoke.sql /opt/spark/smoke/
 RUN mkdir /tmp/smoke-classes \

@@ -40,11 +40,12 @@ awk '{
   }
 }
 END { printf "参与时区探测的执行器数量=%d，编号=%s\n", count, ids }' <<<"$evidence"
-beeline=(/opt/hive/bin/beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000)
+beeline=(beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000)
 count=$("${gateway[@]}" "${beeline[@]}" -e 'SELECT id FROM dp_smoke.t_offline' | awk 'END { print NR }')
 echo "HiveServer2 查询返回行数=$count"
 [[ "$count" == 3 ]]
 part=$("${gateway[@]}" "${beeline[@]}" -e 'SHOW PARTITIONS dp_smoke.t_offline')
 echo "北京时间 2026-11-25 00:30 对应分区：$part"
 [[ "$part" == dt=2026-11-25 ]]
+"${gateway[@]}" hdfs dfs -test -d /user/hive/warehouse/dp_smoke.db/t_offline/dt=2026-11-25
 echo '离线冒烟测试通过。'
