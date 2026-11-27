@@ -153,16 +153,20 @@ git rev-parse HEAD
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml build gateway
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --no-deps --wait gateway
 docker compose -f deploy/docker-compose.yml exec gateway spark-submit --version
+docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates ALL
 bash deploy/scripts/smoke-offline.sh && bash deploy/scripts/smoke-offline.sh
 docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates FINISHED
-docker compose -f deploy/docker-compose.yml exec gateway beeline -u jdbc:hive2://hiveserver2:10000 -e "SELECT COUNT(*) FROM dp_smoke.t_offline"
+docker compose -f deploy/docker-compose.yml exec gateway /opt/hive/bin/beeline --silent=true --showHeader=false --outputformat=tsv2 -n dp -u jdbc:hive2://hiveserver2:10000 -e "SELECT id FROM dp_smoke.t_offline"
+docker compose -f deploy/docker-compose.yml exec gateway yarn application -list -appStates ALL
 ```
 
 脚本只重建专用测试表 `dp_smoke.t_offline`，请串行执行。SQL 文件打包在 Gateway 的 Scala 提交入口中，由远程 driver 执行。Gateway 随作业分发镜像内的 Hive 客户端依赖，YARN 将其解压至应用工作目录，driver 通过 Metastore 服务名访问元数据。
 
 每次验收应记录独立的 Application ID、最终状态、耗时、driver 与参与探测的 executor JVM 的实际时区、Spark SQL 会话时区、HiveServer2 查询行数与唯一分区。两次都应返回 0、状态 SUCCEEDED、行数 3，分区为 `dt=2026-11-25`（输入为北京时间当日 00:30，即 UTC 前一日 16:30）。
 
-资源请求为 1 GB driver 和两个各 1 GB、1 核的 executor。YARN 还会计入容器内存开销并按分配粒度取整，在当前 4096 MB 节点上，实际可同时运行的 executor 可能少于请求数。请保留脚本中实际参与探测的 executor ID。若提交失败，脚本保留 spark-submit 完整输出，并在取得应用 ID 后导出 YARN 日志。如果仍无法访问 Hive 3.1.3 Metastore，请在合并请求中附完整错误与应用日志，由架构师评审版本或配置变更。
+脚本在客户端统计 HiveServer2 返回的数据行。请对比两份完整应用清单，确认只新增了本轮两个 Spark 应用，并记录其编号。
+
+驱动程序申请 512 MB，两个执行器各申请 1 GB 内存和 1 核。计入开销并取整后，三个容器分别占用 1024、1536、1536 MB，合计 4096 MB。脚本输出实际参与时区探测的执行器数量和编号。如果只观测到一个，请保留脚本退出码，并附上该应用的容器清单供审查。若提交失败，脚本保留 spark-submit 完整输出，并在取得应用 ID 后导出 YARN 日志。如果仍无法访问 Hive 3.1.3 Metastore，请在合并请求中附完整错误与应用日志，由架构师评审版本或配置变更。
 
 ## 远程运维通道
 
