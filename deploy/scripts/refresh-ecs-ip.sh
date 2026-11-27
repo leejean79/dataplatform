@@ -16,11 +16,38 @@ fi
 result=$(
   source "$conf" >/dev/null 2>&1
   : "${ALIYUN_ACCESS_KEY_ID:?}" "${ALIYUN_ACCESS_KEY_SECRET:?}" "${ALIYUN_REGION:?}" "${ECS_INSTANCE_ID:?}"
-  ALIBABA_CLOUD_ACCESS_KEY_ID="$ALIYUN_ACCESS_KEY_ID" \
-  ALIBABA_CLOUD_ACCESS_KEY_SECRET="$ALIYUN_ACCESS_KEY_SECRET" \
-    aliyun ecs DescribeInstances --mode AK --region "$ALIYUN_REGION" --RegionId "$ALIYUN_REGION" \
-      --InstanceIds "[\"$ECS_INSTANCE_ID\"]" 2>/dev/null
-) || { echo '实例查询失败，请检查本地配置及只读查询权限。' >&2; exit 1; }
+  reply=$(
+    ALIBABA_CLOUD_ACCESS_KEY_ID="$ALIYUN_ACCESS_KEY_ID" \
+    ALIBABA_CLOUD_ACCESS_KEY_SECRET="$ALIYUN_ACCESS_KEY_SECRET" \
+    aliyun ecs DescribeInstances --region "$ALIYUN_REGION" --RegionId "$ALIYUN_REGION" \
+      --InstanceIds "[\"$ECS_INSTANCE_ID\"]" 2>&1
+  ) || {
+    echo '实例查询失败，请检查本地配置及只读查询权限。' >&2
+    # 仅输出筛选并脱敏后的错误行。Filter diagnostics and redact credentials before logging.
+    reply=${reply//"$ALIYUN_ACCESS_KEY_ID"/<密钥>}
+    reply=${reply//"$ALIYUN_ACCESS_KEY_SECRET"/<密钥>}
+    printf '%s' "$reply" | python3 -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    error = json.loads(raw)
+except ValueError:
+    lines = raw.splitlines()
+else:
+    lines = []
+    if isinstance(error, dict):
+        for label, keys in (("Code", ("Code", "code", "error_code")), ("Message", ("Message", "message"))):
+            value = next((error[k] for k in keys if isinstance(error.get(k), str)), "")
+            if value.strip():
+                lines.append(label + ": " + value.splitlines()[0])
+selected = [line for line in lines if line.startswith("ERROR") or "Code" in line or "Message" in line]
+for line in selected[:3]:
+    print(line)
+' >&2
+    exit 1
+  }
+  printf '%s' "$reply"
+) || exit 1
 address=$(printf '%s' "$result" | python3 -c '
 import ipaddress, json, sys
 try:
